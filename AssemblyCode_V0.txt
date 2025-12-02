@@ -1,0 +1,31 @@
+addi x22,x0,0 # i - loop variable
+addi x23,x0,0 # j - loop variable
+addi x10,x0,10 # Maximum Loop count
+
+# To load the array
+Loop1:
+    slli x24, x22, 2
+    sw x22,0x200(x24)
+    addi x22,x22,1
+    bne x22,x10,Loop1
+
+addi x22,x0,0 # Initializing loop variable i for Loop2
+Loop2:
+    slli x24, x22, 2 # i*4 for offset of array
+    add x23,x22,x0   # j=i, first value of j initialized for inner loop
+Loop3:
+    slli x25, x23, 2 # j*4 for offset of array
+    lw x1,0x200(x24) # a[i]
+    lw x2,0x200(x25) # a[j]
+    bge x1,x2,EndIf  # if a[i] >= a[j], then end the loop
+
+    # If a[i] < a[j], then swap
+    add x5,x1,x0       # temp <- a[i]
+    sw x2,0x200(x24)   # a[i] <- a[j]
+    sw x5,0x200(x25)   # a[j] <- temp
+EndIf:
+    addi x23,x23,1
+    bne x23,x10,Loop3 # Repeat Loop3 with next value of j
+
+    addi x22,x22,1    # Else end Loop3 and
+    bne x22,x10,Loop2 # Go to Loop2 with the next value of i
