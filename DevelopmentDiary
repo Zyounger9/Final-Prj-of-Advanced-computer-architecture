@@ -1,0 +1,3 @@
+1203_V0.1  design Forward Unit
+SrcAMux (Input A)    SrcBMux (Input B for Store)    ALUSrcMUX (Final Input B)
+1207_V0.2  revise bug1, update the Intro of Main Control Unit
