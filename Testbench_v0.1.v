@@ -1,100 +1,72 @@
-// =================================================================
-// RISC-V Testbench for Bubble Sort
-// 功能: 验证 CPU 能否正确执行冒泡排序汇编程序
-// 显示: 自动打印排序结果到控制台 Log
-// =================================================================
-
 module testbench;
-
-    // --- 1. 参数定义 ---
-    localparam CLK_PERIOD = 10;      // 10ns 周期
-    localparam CLK_HALF_PERIOD = 5;  // 5ns 半周期
-    // 冒泡排序耗时较长 (10个数约需几百到一千周期)，给 2000 周期足够安全
-    localparam RUN_CYCLES = 2000;    
-
-    // --- 2. 信号定义 ---
+    // --- 信号定义 ---
     reg clk;
     reg rst;
-    integer i;
-    
-    // --- 3. 实例化 CPU (Unit Under Test) ---
+    integer i; // 用于循环打印内存
+
+    // --- 实例化 CPU (Device Under Test) ---
     RISC_V_Processor_Pipelined uut (
         .clk(clk),
         .rst(rst)
     );
 
-    // --- 4. 时钟生成 ---
+    // --- 时钟生成 (每 5ns 翻转一次，周期 10ns) ---
     initial begin
         clk = 0;
-        forever #CLK_HALF_PERIOD clk = ~clk; 
+        forever #5 clk = ~clk;
     end
 
-    // --- 5. 仿真主流程 ---
+    // --- 仿真主流程 ---
     initial begin
-        // 开启波形记录 (如果需要查看 EPWave)
-        $dumpfile("dump.vcd");
-        // 记录 CPU 内部的所有信号，方便调试
-        $dumpvars(0, testbench); 
+        // 1. 【关键】开启波形记录
+        // 如果没有这两行，EDA Playground 的示波器就不会显示任何图像
+        $dumpfile("dump.vcd");   // 指定波形文件名
+        $dumpvars(0, testbench); // 记录 testbench 模块下的所有信号
 
-        // --- 步骤 1: 复位 ---
-        rst = 1;
-        #(CLK_PERIOD * 2); // 保持复位 2 个周期
-        rst = 0;
-        
-        $display("==========================================================");
-        $display("   RISC-V 冒泡排序仿真开始 ");
-        $display("==========================================================");
-        $display("说明: ");
-        $display("1. CPU 指令内存中硬编码了一个程序。");
-        $display("2. 程序首先将 0-9 写入内存 (输入数据)。");
-        $display("3. 然后使用冒泡排序将数据改为降序排列 (9-0)。");
-        $display("----------------------------------------------------------");
-        $display("正在运行 CPU (预计耗时 %0d ns)...", RUN_CYCLES * CLK_PERIOD);
+        // 2. 复位序列
+        rst = 1;    // 按下复位键，让 CPU 初始化
+        #20;        // 保持 20ns
+        rst = 0;    // 松开复位键，CPU 开始运行
+        $display("--- 仿真开始: RISC-V 冒泡排序程序 ---");
 
-        // --- 步骤 2: 等待程序执行 ---
-        // 我们等待足够长的时间让汇编程序跑完
-        #(RUN_CYCLES * CLK_PERIOD);
+        // 3. 运行仿真
+        // 冒泡排序大约需要 N^2 次指令。对于 10 个数，3500ns (350个周期) 足够跑完。
+        // 如果你只跑 50ns，波形会有，但排序还没开始就结束了。
+        #3500; 
 
-        // --- 步骤 3: 打印最终结果 ---
-        // 直接读取 CPU 内部 Data_Memory 模块的 memory 数组
+        // 4. 验证结果：检查数据内存 (Data Memory)
         // 数组起始地址是 0x200 (十进制 512)
-        $display("\n==========================================================");
-        $display("   仿真结束: 检查内存结果 (地址 0x200 起始)");
-        $display("==========================================================");
+        $display("\n--- 最终结果 (内存地址 0x200 - 0x224) ---");
         $display("预期结果: 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 (降序)");
-        $display("实际内存:");
+        $display("实际结果:");
         
-        $write("[ ");
         for (i = 0; i < 10; i = i + 1) begin
-            // 注意: 我们的内存是 8 位宽的小端序 (Little Endian)
-            // 读取一个 32-bit 字需要拼接 4 个字节: {MSB, ..., LSB}
-            // 地址计算: Base(512) + Index*4 + ByteOffset
-            $write("%0d", {
-                uut.DM.memory[512 + i*4 + 3], 
-                uut.DM.memory[512 + i*4 + 2], 
-                uut.DM.memory[512 + i*4 + 1], 
-                uut.DM.memory[512 + i*4]
-            });
-            
-            if (i < 9) $write(", ");
+            // 直接读取 uut (CPU实例) -> DM (数据内存模块) -> memory (内存数组)
+            // 地址计算: 512 + i*4
+            // 注意: 我们的内存是 8 位宽的小端序，所以需要把 4 个字节拼接起来显示
+            $display("Addr 0x%h: %d", 
+                512 + i*4,
+                {uut.DM.memory[512 + i*4 + 3], 
+                 uut.DM.memory[512 + i*4 + 2], 
+                 uut.DM.memory[512 + i*4 + 1], 
+                 uut.DM.memory[512 + i*4]}
+            );
         end
-        $write(" ]\n");
-        $display("==========================================================");
 
+        $display("\n--- 仿真结束 ---");
+        
+        // 5. 停止仿真
         $finish;
     end
-
-    // --- 6. (可选) 实时监控 ---
-    // 监听内存写入信号，当数据发生交换时打印出来，让你更有“实感”
+    
+    // --- (可选) 实时监视器 ---
+    // 在 Log 中打印每一步的 PC 和 指令，方便没看波形时也能知道程序在跑
     always @(posedge clk) begin
-        if (uut.MemWrite_M) begin
-            // 当内存写使能有效时
-            // 注意: 这里的 Write_Data_M 和 res_M 是 CPU 内部信号
-            // 0x200 是十进制 512
-            if (uut.res_M >= 512 && uut.res_M < 552) begin
-                $display("Time %0t ns: CPU 正在写入内存地址 0x%h, 写入值: %0d", 
-                         $time, uut.res_M, uut.WriteData_M);
-            end
+        if (!rst) begin
+            // 只有当 PC 发生变化时才打印，或者每隔 100ns 打印一次，防止 Log 刷屏太快
+            // 这里为了简单，我们只在特定的 PC 地址打印（例如循环开头）
+            // 或者你可以选择注释掉下面这行，保持 Log 清爽
+            // $display("Time: %0t | PC: %h", $time, uut.PC_Out_F);
         end
     end
 
