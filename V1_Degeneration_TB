@@ -1,0 +1,58 @@
+`timescale 1ns / 1ps
+
+module tb_soc;
+
+    logic clk;
+    logic reset;
+
+    // 实例化 SoC
+    riscv_soc uut (
+        .clk(clk),
+        .reset(reset)
+    );
+
+    // 时钟生成 (10ns 周期)
+    always #5 clk = ~clk;
+
+    // 仿真控制主流程
+    initial begin
+        // 1. 初始化信号
+        clk = 0;
+        reset = 1;
+        
+        // 2. 保持复位 20ns 
+        // 这一步至关重要：它触发 uut 内部的 always_ff if(reset) 逻辑
+        // 从而将 5, 2, 9 写入数据内存 dmem
+        #20;
+        
+        // 3. 打印初始状态 (验证内存是否初始化成功)
+        $display("========================================");
+        $display("Initial State (After Reset):");
+        $display("Addr 0 (should be 5): %d", uut.dmem[0]); 
+        $display("Addr 1 (should be 2): %d", uut.dmem[1]); 
+        $display("Addr 2 (should be 9): %d", uut.dmem[2]);
+        $display("========================================");
+
+        // 4. 释放复位，开始运行 CPU
+        reset = 0;
+        
+        // 5. 运行 500ns (足够跑完所有指令)
+        #500;
+
+        // 6. 打印最终结果 (验证交换是否成功)
+        $display("Final State (After Swap):");
+        $display("Addr 0 (should be 2): %d", uut.dmem[0]); 
+        $display("Addr 1 (should be 5): %d", uut.dmem[1]); 
+        $display("Addr 2 (should be 9): %d", uut.dmem[2]);
+        $display("========================================");
+        
+        $finish;
+    end
+    
+    // 生成波形文件 (EDA Playground 需要)
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, tb_soc);
+    end
+
+endmodule
