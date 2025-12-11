@@ -1,0 +1,35 @@
+Apply 3 concrete optimizations:
+
+Opt 1 – Cleaner Control_Unit: use opcode localparams and a single default assignment (less repetition, fewer X’s).
+
+Opt 2 – Better register file: standard posedge write, protect x0, and keep reads logically tied to x0 = 0.
+
+Opt 3 – Remove unused ImmSrc through the pipeline: ImmSrc_E and its ports were never used; I removed them from Pipe_E and the top module to shrink/control pipeline width.
+
+Keep code ≤ 500 lines (trimmed comments, no structural bloat).
+
+Highlight optimized lines/blocks with // *** OPTIMIZED *** comments.
+
+Brief optimization structure
+
+Control_Unit (Opt 1)
+
+Added localparam names for opcodes instead of bare 7'bxxxxx.
+
+Introduced a single default assignment for all control signals and only override what’s needed in each case.
+
+Removed xx don’t-cares, which avoids X-propagation in simulation and makes behavior clearer.
+
+registerFile (Opt 2)
+
+Switched write to posedge clk (more standard and easier timing-wise).
+
+Prevented writes to x0 and hard-wired reads of x0 to 0.
+
+Simplified initialization: all registers start at zero for clean simulation.
+
+Pipe_E + top-level (Opt 3)
+
+Removed ImmSrc_E from Pipe_E ports and from the top-level signal list, because ImmSrc is only needed in Decode to build imm_data.
+
+This reduces pipeline width and visual clutter without changing functionality.
