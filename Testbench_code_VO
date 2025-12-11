@@ -1,0 +1,124 @@
+`timescale 1ns/1ps
+
+module tb_riscv_bubblesort_clean;
+
+    reg clk;
+    reg rst;
+    integer i;
+    integer cycle;
+
+    // 🟢 Set this to the number of elements your program sorts
+    localparam N_ELEMS = 8;  // currently your code clearly sorts 8
+
+    RISC_V_Processor_Pipelined dut (
+        .clk(clk),
+        .rst(rst)
+    );
+
+    // Clock
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+
+    initial begin
+        $dumpfile("bubblesort_pipeline.vcd");
+        $dumpvars(0, tb_riscv_bubblesort_clean);
+
+        cycle = 0;
+        rst   = 1'b1;
+
+        // reset
+        repeat (5) @(posedge clk);
+        rst = 1'b0;
+
+        // BEFORE SORT
+        $display("\n==============================================");
+        $display(" MEMORY BEFORE BUBBLE SORT (From DUT)");
+        $display(" (First %0d elements)", N_ELEMS);
+        $display("==============================================");
+        display_memory(N_ELEMS);
+
+        // run for enough cycles
+        repeat (800) @(posedge clk);
+
+        // AFTER SORT
+        $display("\n==============================================");
+        $display(" MEMORY AFTER BUBBLE SORT (From DUT)");
+        $display(" (First %0d elements)", N_ELEMS);
+        $display("==============================================");
+        display_memory(N_ELEMS);
+
+        // SORT CHECK
+        check_sorted(N_ELEMS);
+
+        $display("\nBubble Sort Test Completed\n");
+        $finish;
+    end
+
+    // Simple trace
+    always @(posedge clk) begin
+        if (!rst) begin
+            cycle <= cycle + 1;
+            $display("Cycle %0d | PC = 0x%08h | Instr = 0x%08h | ALU = 0x%08h | Zero = %b",
+                      cycle,
+                      dut.PC_Out_F,
+                      dut.Instruction_F,
+                      dut.res_E,
+                      dut.Zero_E);
+        end
+    end
+
+    // =========================================
+    // Display first N elements
+    // =========================================
+    task display_memory;
+        input integer n;
+        reg [31:0] value;
+        integer k;
+        begin
+            for (k = 0; k < n; k = k + 1) begin
+                value = {dut.DM.memory[k*4 + 3],
+                         dut.DM.memory[k*4 + 2],
+                         dut.DM.memory[k*4 + 1],
+                         dut.DM.memory[k*4 + 0]};
+                $display("Index %0d : %0d (0x%08h)", k, value, value);
+            end
+        end
+    endtask
+
+    // =========================================
+    // Sorted check for first N elements
+    // =========================================
+    task check_sorted;
+        input integer n;
+        reg [31:0] prev;
+        reg [31:0] curr;
+        integer k;
+        begin
+            // first element
+            prev = {dut.DM.memory[3],
+                    dut.DM.memory[2],
+                    dut.DM.memory[1],
+                    dut.DM.memory[0]};
+
+            for (k = 1; k < n; k = k + 1) begin
+                curr = {dut.DM.memory[k*4 + 3],
+                        dut.DM.memory[k*4 + 2],
+                        dut.DM.memory[k*4 + 1],
+                        dut.DM.memory[k*4 + 0]};
+
+                if (curr < prev) begin
+                    $display("\nSORT ERROR at index %0d!", k);
+                    $display("Prev = %0d  Curr = %0d", prev, curr);
+                    $stop;
+                end
+
+                prev = curr;
+            end
+
+            $display("\nSORT CHECK PASSED: First %0d elements in ascending order.", n);
+        end
+    endtask
+
+endmodule
