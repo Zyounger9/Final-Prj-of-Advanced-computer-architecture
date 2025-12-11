@@ -1,0 +1,635 @@
+// =====================================================
+// CONTROL + ALU CONTROL
+// =====================================================
+module Control_Unit(
+    input  [6:0] opcode,
+    output reg   Branch,
+    output reg   Jump,
+    output reg [1:0] ImmSrc,
+    output reg [1:0] ResultSrc,
+    output reg [1:0] ALUOp,
+    output reg   MemWrite,
+    output reg   ALUSrc,
+    output reg   RegWrite
+);
+    // *** OPTIMIZED: use named opcodes instead of raw 7'b values ***
+    localparam OPC_RTYPE = 7'b0110011;
+    localparam OPC_LOAD  = 7'b0000011;
+    localparam OPC_STORE = 7'b0100011;
+    localparam OPC_BRANCH= 7'b1100011;
+    localparam OPC_ITYPE = 7'b0010011;
+    localparam OPC_JAL   = 7'b1101111;
+
+    always @(*) begin
+        // *** OPTIMIZED: single default for all control signals ***
+        {ALUSrc, ResultSrc, ImmSrc, RegWrite, MemWrite, Branch, ALUOp, Jump} =
+            11'b0_00_00_0_0_0_00_0;
+
+        case (opcode)
+            OPC_RTYPE: begin
+                ALUSrc   = 1'b0;
+                ResultSrc= 2'b00;
+                RegWrite = 1'b1;
+                ALUOp    = 2'b10;
+            end
+            OPC_LOAD: begin
+                ALUSrc   = 1'b1;
+                ResultSrc= 2'b01;
+                ImmSrc   = 2'b00;
+                RegWrite = 1'b1;
+                MemWrite = 1'b0;
+                ALUOp    = 2'b00;
+            end
+            OPC_STORE: begin
+                ALUSrc   = 1'b1;
+                ImmSrc   = 2'b01;
+                MemWrite = 1'b1;
+                ALUOp    = 2'b00;
+            end
+            OPC_BRANCH: begin
+                ALUSrc   = 1'b0;
+                ImmSrc   = 2'b10;
+                Branch   = 1'b1;
+                ALUOp    = 2'b01;
+            end
+            OPC_ITYPE: begin
+                ALUSrc   = 1'b1;
+                ImmSrc   = 2'b00;
+                ResultSrc= 2'b00;
+                RegWrite = 1'b1;
+                ALUOp    = 2'b10;
+            end
+            OPC_JAL: begin
+                Jump     = 1'b1;
+                ImmSrc   = 2'b11;
+                ResultSrc= 2'b10; // PC+4
+                RegWrite = 1'b1;
+            end
+        endcase
+    end
+endmodule
+
+module ALU_Control(
+    input  [1:0] ALUOp,
+    input  [2:0] Funct3,
+    input        Funct7,
+    input        op,
+    output reg [2:0] Operation
+);
+    always @(*) begin
+        case (ALUOp)
+            2'b00: Operation = 3'b000;  // add for load/store
+            2'b01: Operation = 3'b001;  // sub for branch
+            2'b10: begin
+                case (Funct3)
+                    3'b000: Operation = (op && Funct7) ? 3'b001 : 3'b000;
+                    3'b010: Operation = 3'b101; // slt
+                    3'b110: Operation = 3'b011; // or
+                    3'b111: Operation = 3'b010; // and
+                    default: Operation = 3'b000;
+                endcase
+            end
+            default: Operation = 3'b000;
+        endcase
+    end
+endmodule
+
+module CU(
+    input  [6:0] opcode,
+    input  [2:0] Funct3,
+    input  [6:0] Funct7,
+    output [1:0] ResultSrc,
+    output       MemWrite,
+    output       ALUSrc,
+    output [1:0] ImmSrc,
+    output       RegWrite,
+    output [2:0] Operation,
+    output       Branch,
+    output       Jump
+);
+    wire [1:0] ALUOp;
+
+    Control_Unit c(
+        .opcode   (opcode),
+        .Branch   (Branch),
+        .Jump     (Jump),
+        .ImmSrc   (ImmSrc),
+        .ResultSrc(ResultSrc),
+        .ALUOp    (ALUOp),
+        .MemWrite (MemWrite),
+        .ALUSrc   (ALUSrc),
+        .RegWrite (RegWrite)
+    );
+
+    ALU_Control a(
+        .ALUOp    (ALUOp),
+        .Funct3   (Funct3),
+        .Funct7   (Funct7[5]),
+        .op       (opcode[5]),
+        .Operation(Operation)
+    );
+endmodule
+
+// =====================================================
+// REGISTER FILE  (32 x 32, x0 hardwired to 0)
+// =====================================================
+module registerFile (
+    input  wire        clk,
+    input  wire        RegWrite,
+    input  wire [4:0]  RS1,
+    input  wire [4:0]  RS2,
+    input  wire [4:0]  RD,
+    input  wire [31:0] WriteData,
+    output wire [31:0] ReadData1,
+    output wire [31:0] ReadData2
+);
+    reg [31:0] Registers [31:0];
+
+    integer i;
+    initial begin
+        // *** OPTIMIZED: clean reset state instead of "random" values ***
+        for (i = 0; i < 32; i = i + 1)
+            Registers[i] = 32'b0;
+    end
+
+    // *** OPTIMIZED: enforce x0 = 0 on reads ***
+    assign ReadData1 = (RS1 == 5'd0) ? 32'b0 : Registers[RS1];
+    assign ReadData2 = (RS2 == 5'd0) ? 32'b0 : Registers[RS2];
+
+    // *** OPTIMIZED: posedge write & don't write x0 ***
+    always @(posedge clk) begin
+        if (RegWrite && (RD != 5'd0))
+            Registers[RD] <= WriteData;
+    end
+endmodule
+
+// =====================================================
+// ALU
+// =====================================================
+module alu(
+    input  [31:0] a,
+    input  [31:0] b,
+    input  [2:0]  op,
+    output reg [31:0] res,
+    output reg       zero
+);
+    always @(*) begin
+        case (op)
+            3'b000: res = a + b;
+            3'b001: res = a - b;
+            3'b101: res = a < b;
+            3'b011: res = a | b;
+            3'b010: res = a & b;
+            default: res = 32'b0;
+        endcase
+        zero = (res == 32'b0);
+    end
+endmodule
+
+// =====================================================
+// IMMEDIATE GEN
+// =====================================================
+module imm_data_gen(
+    input  [31:0] instruction,
+    input  [1:0]  ImmSrc,
+    output reg [31:0] imm_data
+);
+    always @(*) begin
+        case (ImmSrc)
+            2'b00: imm_data = {{20{instruction[31]}}, instruction[31:20]};
+            2'b01: imm_data = {{20{instruction[31]}}, instruction[31:25], instruction[11:7]};
+            2'b10: imm_data = {{20{instruction[31]}}, instruction[7], instruction[30:25],
+                               instruction[11:8], 1'b0};
+            2'b11: imm_data = {{12{instruction[31]}}, instruction[19:12], instruction[20],
+                               instruction[30:21], 1'b0};
+            default: imm_data = 32'b0;
+        endcase
+    end
+endmodule
+
+// =====================================================
+// DATA MEMORY (byte-addressable, 64 bytes)
+// =====================================================
+module Data_Memory(
+    input  wire [31:0] Mem_Addr,
+    input  wire [31:0] Write_Data,
+    input  wire        clk,
+    input  wire        MemWrite,
+    output wire [31:0] Read_Data
+);
+    reg [7:0] memory [63:0];
+
+    integer i;
+    initial begin
+        for (i = 0; i < 64; i = i + 1)
+            memory[i] = i[7:0];
+    end
+
+    assign Read_Data = {memory[Mem_Addr + 3],
+                        memory[Mem_Addr + 2],
+                        memory[Mem_Addr + 1],
+                        memory[Mem_Addr + 0]};
+
+    always @(posedge clk) begin
+        if (MemWrite) begin
+            {memory[Mem_Addr + 3],
+             memory[Mem_Addr + 2],
+             memory[Mem_Addr + 1],
+             memory[Mem_Addr + 0]} = Write_Data;
+        end
+    end
+endmodule
+
+// =====================================================
+// SIMPLE ADDER
+// =====================================================
+module adder (
+    input  [31:0] a,
+    input  [31:0] b,
+    output [31:0] out
+);
+    assign out = a + b;
+endmodule
+
+// =====================================================
+// INSTRUCTION MEMORY (byte-addressable, given contents)
+// =====================================================
+module Instruction_Memory(
+    input  wire [31:0] Inst_Address,
+    output reg  [31:0] Instruction
+);
+    reg [7:0] memory [83:0];
+
+    initial begin
+        memory[0] = 8'b00010011;
+        memory[1] = 8'b00001011;
+        memory[2] = 8'b00000000;
+        memory[3] = 8'b00000000;
+
+        memory[4] = 8'b10010011;
+        memory[5] = 8'b00001011;
+        memory[6] = 8'b00000000;
+        memory[7] = 8'b00000000;
+
+        memory[8] = 8'b00010011;
+        memory[9] = 8'b00000101;
+        memory[10] = 8'b10100000;
+        memory[11] = 8'b00000000;
+
+        memory[12] = 8'b00010011;
+        memory[13] = 8'b00011100;
+        memory[14] = 8'b00101011;
+        memory[15] = 8'b00000000;
+
+        memory[16] = 8'b00100011;
+        memory[17] = 8'b00100000;
+        memory[18] = 8'b01101100;
+        memory[19] = 8'b00000011;
+
+        memory[20] = 8'b00010011;
+        memory[21] = 8'b00001011;
+        memory[22] = 8'b00011011;
+        memory[23] = 8'b00000000;
+
+        memory[24] = 8'b11100011;
+        memory[25] = 8'b10011010;
+        memory[26] = 8'b01010010;
+        memory[27] = 8'b11111110;
+
+        memory[28] = 8'b00010011;
+        memory[29] = 8'b00001011;
+        memory[30] = 8'b00000000;
+        memory[31] = 8'b00000000;
+
+        memory[32] = 8'b00010011;
+        memory[33] = 8'b00011100;
+        memory[34] = 8'b00101011;
+        memory[35] = 8'b00000000;
+
+        memory[36] = 8'b00110011;
+        memory[37] = 8'b00000000;
+        memory[38] = 8'b10110011;
+        memory[39] = 8'b00000000;
+
+        memory[40] = 8'b10010011;
+        memory[41] = 8'b10011100;
+        memory[42] = 8'b00101011;
+        memory[43] = 8'b00000000;
+
+        memory[44] = 8'b10000011;
+        memory[45] = 8'b00100010;
+        memory[46] = 8'b00011010;
+        memory[47] = 8'b00000000;
+
+        memory[48] = 8'b10000011;
+        memory[49] = 8'b00110000;
+        memory[50] = 8'b00011010;
+        memory[51] = 8'b00000000;
+
+        memory[52] = 8'b01100011;
+        memory[53] = 8'b00000010;
+        memory[54] = 8'b00010010;
+        memory[55] = 8'b00000100;
+
+        memory[56] = 8'b10110011;
+        memory[57] = 8'b00101011;
+        memory[58] = 8'b00101000;
+        memory[59] = 8'b00000000;
+
+        memory[60] = 8'b00100011;
+        memory[61] = 8'b00100000;
+        memory[62] = 8'b01101100;
+        memory[63] = 8'b00000011;
+
+        memory[64] = 8'b00100011;
+        memory[65] = 8'b10101000;
+        memory[66] = 8'b01010001;
+        memory[67] = 8'b00000011;
+
+        memory[68] = 8'b10010011;
+        memory[69] = 8'b00001011;
+        memory[70] = 8'b00011011;
+        memory[71] = 8'b00000000;
+
+        memory[72] = 8'b11100011;
+        memory[73] = 8'b10011010;
+        memory[74] = 8'b11000011;
+        memory[75] = 8'b11111110;
+
+        memory[76] = 8'b00010011;
+        memory[77] = 8'b00001011;
+        memory[78] = 8'b00011011;
+        memory[79] = 8'b00000000;
+
+        memory[80] = 8'b01100011;
+        memory[81] = 8'b10001100;
+        memory[82] = 8'b01010101;
+        memory[83] = 8'b01111110;
+    end
+
+    always @(*) begin
+        Instruction = {memory[Inst_Address + 3],
+                       memory[Inst_Address + 2],
+                       memory[Inst_Address + 1],
+                       memory[Inst_Address + 0]};
+    end
+endmodule
+
+// =====================================================
+// SIMPLE MUXES
+// =====================================================
+module mux32bit(
+    input  [31:0] a,
+    input  [31:0] b,
+    input  [31:0] c,
+    input  [1:0]  sel,
+    output reg [31:0] out
+);
+    always @(*) begin
+        case (sel)
+            2'b00: out = a;
+            2'b01: out = b;
+            2'b10: out = c;
+            default: out = 32'b0;
+        endcase
+    end
+endmodule
+
+module mux32bit2(
+    input  [31:0] a,
+    input  [31:0] b,
+    input         sel,
+    output reg [31:0] out
+);
+    always @(*) begin
+        out = sel ? b : a;
+    end
+endmodule
+
+// =====================================================
+// PROGRAM COUNTER + PIPELINE REGISTERS
+// =====================================================
+module Program_Counter (
+    input        clk,
+    input        rst,
+    input  [31:0] PC_In,
+    output reg [31:0] PC_Out
+);
+    always @(posedge clk) begin
+        if (rst)
+            PC_Out <= 32'b0;
+        else
+            PC_Out <= PC_In;
+    end
+endmodule
+
+module Pipe_D(
+    input        clk,
+    input  [31:0] Instruction_F,
+    input  [31:0] PC_Out_F,
+    input  [31:0] PCPlus4_F,
+    output reg [31:0] Instruction_D,
+    output reg [31:0] PC_Out_D,
+    output reg [31:0] PCPlus4_D
+);
+    always @(posedge clk) begin
+        Instruction_D <= Instruction_F;
+        PC_Out_D      <= PC_Out_F;
+        PCPlus4_D     <= PCPlus4_F;
+    end
+endmodule
+
+module Pipe_E(
+    input        clk,
+    input  [31:0] ReadData1_D,
+    input  [31:0] ReadData2_D,
+    input  [31:0] PC_Out_D,
+    input  [4:0]  RD_D,
+    input  [31:0] imm_data_D,
+    input  [31:0] PCPlus4_D,
+    input         MemWrite_D,
+    input         ALUSrc_D,
+    input         RegWrite_D,
+    input  [1:0]  ResultSrc_D,
+    input  [2:0]  Operation_D,
+    input         Branch_D,
+    input         Jump_D,
+    output reg    MemWrite_E,
+    output reg    ALUSrc_E,
+    output reg    RegWrite_E,
+    output reg [1:0] ResultSrc_E,
+    output reg [2:0] Operation_E,
+    output reg    Branch_E,
+    output reg    Jump_E,
+    output reg [31:0] ReadData1_E,
+    output reg [31:0] ReadData2_E,
+    output reg [31:0] PC_Out_E,
+    output reg [31:0] imm_data_E,
+    output reg [31:0] PCPlus4_E,
+    output reg [4:0]  RD_E
+);
+    // *** OPTIMIZED: ImmSrc is NOT pipelined (never used in E/M/W) ***
+    always @(posedge clk) begin
+        MemWrite_E   <= MemWrite_D;
+        ALUSrc_E     <= ALUSrc_D;
+        RegWrite_E   <= RegWrite_D;
+        ResultSrc_E  <= ResultSrc_D;
+        Operation_E  <= Operation_D;
+        Branch_E     <= Branch_D;
+        Jump_E       <= Jump_D;
+        ReadData1_E  <= ReadData1_D;
+        ReadData2_E  <= ReadData2_D;
+        PC_Out_E     <= PC_Out_D;
+        imm_data_E   <= imm_data_D;
+        PCPlus4_E    <= PCPlus4_D;
+        RD_E         <= RD_D;
+    end
+endmodule
+
+module Pipe_M(
+    input        clk,
+    input        RegWrite_E,
+    input  [1:0] ResultSrc_E,
+    input        MemWrite_E,
+    input  [31:0] res_E,
+    input  [31:0] WriteData_E,
+    input  [4:0]  RD_E,
+    input  [31:0] PCPlus4_E,
+    output reg   RegWrite_M,
+    output reg [1:0] ResultSrc_M,
+    output reg   MemWrite_M,
+    output reg [31:0] res_M,
+    output reg [31:0] WriteData_M,
+    output reg [4:0]  RD_M,
+    output reg [31:0] PCPlus4_M
+);
+    always @(posedge clk) begin
+        RegWrite_M  <= RegWrite_E;
+        ResultSrc_M <= ResultSrc_E;
+        MemWrite_M  <= MemWrite_E;
+        res_M       <= res_E;
+        WriteData_M <= WriteData_E;
+        RD_M        <= RD_E;
+        PCPlus4_M   <= PCPlus4_E;
+    end
+endmodule
+
+module Pipe_W(
+    input        clk,
+    input        RegWrite_M,
+    input  [1:0] ResultSrc_M,
+    input  [31:0] res_M,
+    input  [31:0] Read_Data_M,
+    input  [4:0]  RD_M,
+    input  [31:0] PCPlus4_M,
+    output reg   RegWrite_W,
+    output reg [1:0] ResultSrc_W,
+    output reg [31:0] res_W,
+    output reg [31:0] Read_Data_W,
+    output reg [4:0]  RD_W,
+    output reg [31:0] PCPlus4_W
+);
+    always @(posedge clk) begin
+        RegWrite_W  <= RegWrite_M;
+        ResultSrc_W <= ResultSrc_M;
+        res_W       <= res_M;
+        Read_Data_W <= Read_Data_M;
+        RD_W        <= RD_M;
+        PCPlus4_W   <= PCPlus4_M;
+    end
+endmodule
+
+// =====================================================
+// TOP-LEVEL PIPELINED PROCESSOR
+// =====================================================
+module RISC_V_Processor_Pipelined(
+    input clk,
+    input rst
+);
+    wire [31:0] PCPlus4_F, PCPlus4_D, PCPlus4_E, PCPlus4_M, PCPlus4_W;
+    wire [31:0] PCin_F, PCTarget_E, PC_Out_F, PC_Out_D, PC_Out_E;
+    wire [31:0] Instruction_F, Instruction_D;
+    wire [31:0] Result_W, ReadData1_D, ReadData2_D;
+    wire [31:0] ReadData1_E, ReadData2_E, ReadData2_M;
+    wire [31:0] res_E, res_M, res_W;
+    wire [31:0] Read_Data_M, Read_Data_W;
+    wire [31:0] imm_data_D, imm_data_E, SrcB_E;
+    wire [4:0]  Instruction_W, Instruction_E, Instruction_M;
+    wire [2:0]  Operation_D, Operation_E;
+    wire [1:0]  ImmSrc_D;
+    wire [1:0]  ResultSrc_W, ResultSrc_D, ResultSrc_E, ResultSrc_M;
+    wire        RegWrite_D, RegWrite_E, RegWrite_M, RegWrite_W;
+    wire        PCSrc_E, ALUSrc_D, ALUSrc_E, Zero_E;
+    wire        Branch_E, Branch_D, Jump_E, Jump_D;
+    wire        MemWrite_D, MemWrite_E, MemWrite_M;
+
+    adder pcp4(PC_Out_F, 32'b100, PCPlus4_F);
+
+    assign PCSrc_E = Jump_E | (Zero_E & Branch_E);
+
+    mux32bit2 PCSrcMUX(PCPlus4_F, PCTarget_E, PCSrc_E, PCin_F);
+    Program_Counter PC(clk, rst, PCin_F, PC_Out_F);
+    Instruction_Memory IM(PC_Out_F, Instruction_F);
+    Pipe_D PD(clk, Instruction_F, PC_Out_F, PCPlus4_F,
+              Instruction_D, PC_Out_D, PCPlus4_D);
+
+    mux32bit ResultSrcMUX(res_W, Read_Data_W, PCPlus4_W,
+                          ResultSrc_W, Result_W);
+
+    registerFile RF(
+        .clk       (clk),
+        .RegWrite  (RegWrite_W),
+        .RS1       (Instruction_D[19:15]),
+        .RS2       (Instruction_D[24:20]),
+        .RD        (Instruction_W),
+        .WriteData (Result_W),
+        .ReadData1 (ReadData1_D),
+        .ReadData2 (ReadData2_D)
+    );
+
+    imm_data_gen ID(Instruction_D, ImmSrc_D, imm_data_D);
+
+    Pipe_E PE(
+        clk,
+        ReadData1_D, ReadData2_D, PC_Out_D,
+        Instruction_D[11:7],
+        imm_data_D, PCPlus4_D,
+        MemWrite_D, ALUSrc_D, RegWrite_D,
+        ResultSrc_D, Operation_D, Branch_D, Jump_D,
+        MemWrite_E, ALUSrc_E, RegWrite_E,
+        ResultSrc_E, Operation_E, Branch_E, Jump_E,
+        ReadData1_E, ReadData2_E, PC_Out_E,
+        imm_data_E, PCPlus4_E, Instruction_E
+    );
+
+    adder pct(PC_Out_E, imm_data_E, PCTarget_E);
+    mux32bit2 ALUSrcMUX(ReadData2_E, imm_data_E, ALUSrc_E, SrcB_E);
+    alu lua(ReadData1_E, SrcB_E, Operation_E, res_E, Zero_E);
+
+    Pipe_M PM(
+        clk,
+        RegWrite_E, ResultSrc_E, MemWrite_E,
+        res_E, ReadData2_E, Instruction_E, PCPlus4_E,
+        RegWrite_M, ResultSrc_M, MemWrite_M,
+        res_M, ReadData2_M, Instruction_M, PCPlus4_M
+    );
+
+    Data_Memory DM(res_M, ReadData2_M, clk, MemWrite_M, Read_Data_M);
+
+    Pipe_W PW(
+        clk,
+        RegWrite_M, ResultSrc_M,
+        res_M, Read_Data_M, Instruction_M, PCPlus4_M,
+        RegWrite_W, ResultSrc_W,
+        res_W, Read_Data_W, Instruction_W, PCPlus4_W
+    );
+
+    CU controlunit(
+        Instruction_D[6:0],
+        Instruction_D[14:12],
+        Instruction_D[31:25],
+        ResultSrc_D, MemWrite_D, ALUSrc_D,
+        ImmSrc_D, RegWrite_D, Operation_D,
+        Branch_D, Jump_D
+    );
+endmodule
