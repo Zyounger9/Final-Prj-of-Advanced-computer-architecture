@@ -2,8 +2,6 @@
 25fall Advanced computer architecture, Final PRJ
 By Trevor, Thierry, Yang
 
-we build a cpu in RiscV with special instruction set.
-
 https://github.com/kazmih/RISC-V-Pipeline/tree/master
 
 Link of Report
