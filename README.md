@@ -7,5 +7,5 @@ we build a cpu in RiscV with special instruction set.
 https://github.com/kazmih/RISC-V-Pipeline/tree/master
 
 Link of Report
-https://docs.google.com/document/d/1RRewOy-fuHN_yRXx5kFoFxv4HNzzx_Hq/edit
+https://drive.google.com/file/d/1R6ygPPMw-Q05CObE0JLEna3SDMN_MKaU/view?usp=drive_link
 
